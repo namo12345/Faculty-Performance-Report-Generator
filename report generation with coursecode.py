@@ -5,10 +5,22 @@ import matplotlib.pyplot as plt
 feedback_df = pd.read_excel('/content/faculty_ratings (1).xlsx')
 
 # Load course code mapping
-course_codes_df = pd.read_excel('/content/New Microsoft Excel Worksheet (2).xlsx')
+course_codes_df = pd.read_excel('/content/course_codes.xlsx')
 
-# Clean faculty names
-feedback_df['Faculty Name'] = feedback_df['Faculty Name'].str.replace(r'^Section[-\s]\w+-', '', regex=True).str.strip()
+# Extract section and clean faculty name
+feedback_df['Section'] = feedback_df['Faculty Name'].str.extract(r'^Section\s*(\w+)-', expand=False).fillna('')
+feedback_df['Faculty Name'] = (
+    feedback_df['Faculty Name']
+    .str.replace(r'^Section\s*\w+-', '', regex=True)
+    .str.strip()
+)
+
+# Standardize faculty titles (remove periods)
+feedback_df['Faculty Name'] = (
+    feedback_df['Faculty Name']
+    .str.replace(r'\.', '', regex=True)  # Remove periods in titles (e.g., "Dr." → "Dr")
+    .str.replace(r'\s+', '_', regex=True)  # Replace spaces with underscores
+)
 
 # Clean course names in both datasets
 feedback_df['Course'] = feedback_df['Course'].str.replace(r'^Feedback on\s+', '', regex=True).str.strip()
@@ -26,21 +38,24 @@ merged_df['Course Code'] = merged_df['Course Code'].fillna('N/A')
 # Clean rating categories
 merged_df['Rating Category'] = (
     merged_df['Rating Category']
-    .str.split('(', n=1, expand=True)[0]  # Remove everything after first "("
-    .str.replace(r'\.\d+$', '', regex=True)  # Remove trailing .1, .2 etc.
-    .str.strip()  # Trim whitespace
+    .str.split('(', n=1, expand=True)[0]
+    .str.replace(r'\.\d+$', '', regex=True)
+    .str.strip()
 )
 
-# Group data by faculty and calculate average ratings
-faculty_data = merged_df.groupby(['Faculty Name', 'Rating Category'])['Rating'].mean().round(4).reset_index()
+# Group data by Section, Faculty Name, and Rating Category
+section_faculty_data = merged_df.groupby(['Section', 'Faculty Name', 'Rating Category'])['Rating'].mean().round(4).reset_index()
 
-# Create individual PNG images for each faculty
-for faculty in faculty_data['Faculty Name'].unique():
-    # Filter data for current faculty
-    faculty_df = faculty_data[faculty_data['Faculty Name'] == faculty]
+# Create individual PNG images for each section-faculty combination
+for (section, faculty), group in section_faculty_data.groupby(['Section', 'Faculty Name']):
+    # Filter data for current section-faculty
+    section_df = section_faculty_data[
+        (section_faculty_data['Section'] == section) & 
+        (section_faculty_data['Faculty Name'] == faculty)
+    ]
     
     # Calculate total average
-    total_avg = faculty_df['Rating'].mean().round(4)
+    total_avg = section_df['Rating'].mean().round(4)
     
     # Create new row for total average
     new_row = pd.DataFrame({
@@ -49,16 +64,19 @@ for faculty in faculty_data['Faculty Name'].unique():
     })
     
     # Append total average row
-    faculty_df = pd.concat([faculty_df, new_row], ignore_index=True)
+    section_df = pd.concat([section_df, new_row], ignore_index=True)
     
     # Prepare table data
     headers = ['Rating Category', 'Average Rating']
-    data = faculty_df[['Rating Category', 'Rating']].values.tolist()
+    data = section_df[['Rating Category', 'Rating']].values.tolist()
     
-    # Get unique courses and codes for faculty
-    faculty_courses = merged_df[merged_df['Faculty Name'] == faculty]
-    courses = faculty_courses['Course'].drop_duplicates().tolist()
-    codes = faculty_courses['Course Code'].drop_duplicates().tolist()
+    # Get unique courses and codes for section-faculty
+    section_courses = merged_df[
+        (merged_df['Section'] == section) & 
+        (merged_df['Faculty Name'] == faculty)
+    ]
+    courses = section_courses['Course'].drop_duplicates().tolist()
+    codes = section_courses['Course Code'].drop_duplicates().tolist()
     
     # Add course and code rows
     data.insert(0, ['Course Codes:', ', '.join(codes)])
@@ -79,11 +97,11 @@ for faculty in faculty_data['Faculty Name'].unique():
     
     # Set font size and padding
     table.auto_set_font_size(False)
-    table.set_fontsize(16)  # Larger font for readability
+    table.set_fontsize(16)
     table.scale(1.8, 2.2)  # Increased scaling
     
-    # Save as high-resolution PNG
-    filename = f"{faculty.replace(' ', '_')}_ratings.png"
+    # Generate consistent filename
+    filename = f"{section}-{faculty}_ratings.png"
     plt.savefig(filename, bbox_inches='tight', dpi=300)
     plt.close()
 
